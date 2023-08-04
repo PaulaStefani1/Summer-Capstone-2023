@@ -1,0 +1,388 @@
+---
+title: "Home Credit EDA Modeling Workbook"
+author: "Group 8: Jade Gosar, Karson Eilers, Paula Soutostefani"
+date: "2023-07-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+#install.packages("randomForest")
+#install.packages("rminer")
+
+#load packages
+library(tidyverse)
+library(caret)
+library(readr)
+library(dplyr)
+library(rpart)
+library(rminer)
+library(randomForest)
+```
+
+
+```{r data import}
+#Imports cleaned training and testing set containing relevant varaibles and no na values
+#see 'data_consolidation_script.R' for full details
+
+#The training set is a product of the application_train.csv set and two values from 
+training_set <- read_csv('clean_training_data.csv')
+#note - the cleaned training set has 263,480 observations instead fo the 307511 in the origina file
+testing_set <- read_csv('clean_testing_data.csv')
+#note - the cleaned testing set has 42,299 observations instead of the 48,744
+
+```
+##Observation on cleaning and TARGET value frequency.
+Group 8 is concerned about the effect of cleaning on the already imbalanced target classification. The group set a tolerance threshold of a 10% change in the TARGET variable. If the cleaning resulted in a disproportionate relative increase or decrease in the target variable frequency, the group would reevaluate cleaning methods.
+
+The cleaning methods used resulted in a 4.24% reduction in the TARGET variable, well below the group's threshold. 
+
+```{r Target variable testing}
+## Group note - you don't need to import the raw data back in. We'll just uncomment this in the final submissiont to demonstrate the change percentage in the TARGET variable
+
+#raw_data_train <- read_csv("application_train.csv")
+
+#(mean(raw_data_train$TARGET) - mean(training_set$TARGET))/mean(raw_data_train$TARGET)
+
+```
+
+
+
+```{r data formatting}
+#Some of the variables need to be treated as factors for the subsequebnt modeling steps
+
+#Let's filter the characters first
+testing_set %>% mutate(across(where(is.character), as.factor))
+training_set %>% mutate(across(where(is.character), as.factor))
+
+#we should factor the Target variable for classification approaches, too.
+training_set$TARGET <- as.factor(training_set$TARGET)
+
+#DAYS_EMPLOYED and DAYS_CREDIT are both negative values, since they are past date - current date. Let's make them absolute values to be easier to interpret. 
+
+#There appears to be one anomaly in the DAYS_EMPLOYED Values; a very large positive number. 
+training_set %>%
+   ggplot(aes(DAYS_EMPLOYED)) + geom_boxplot()
+
+testing_set %>%
+   ggplot(aes(DAYS_EMPLOYED)) + geom_boxplot()
+
+
+summary(testing_set$DAYS_EMPLOYED)
+summary(training_set$DAYS_EMPLOYED)
+
+#The anomoly occurs in both training and testing. It must be a mis entry as it's impossible to work 365,243 days in a human lifetime. We will remove it from both sets.
+training_set <- training_set %>%
+  filter(DAYS_EMPLOYED <= 0)
+
+summary(training_set$DAYS_EMPLOYED)
+
+testing_set <- testing_set %>%
+  filter(DAYS_EMPLOYED <= 0)
+
+summary(training_set$DAYS_EMPLOYED)
+
+#Now, let's make these values absolute for interpretation.
+training_set$DAYS_EMPLOYED <- abs(training_set$DAYS_EMPLOYED)
+testing_set$DAYS_EMPLOYED <- abs(testing_set$DAYS_EMPLOYED)
+training_set$DAYS_CREDIT <- abs(training_set$DAYS_CREDIT)
+testing_set$DAYS_CREDIT <- abs(testing_set$DAYS_CREDIT)
+
+```
+Changing character columns into factor variables to add as dummy variables into analysis
+
+```{r}
+# Select character columns that contain categorical data to turn into factor variables
+columns <- c("NAME_INCOME_TYPE", "NAME_EDUCATION_TYPE")
+
+# Loop over the columns selected and convert them to factors
+for (column in columns) {
+  training_set[[column]] <- factor(training_set[[column]])
+}
+
+str(training_set)
+```
+
+Create dummy variable for categorical variables
+```{r}
+# create dummy variables for categorical variables
+dummies <- model.matrix(~ NAME_INCOME_TYPE + NAME_EDUCATION_TYPE + 0, data = training_set)
+
+# add the dummy variables to the original data frame
+training_set_w_dummies <- cbind(training_set, dummies)
+
+# rename the dummy variable columns
+colnames(training_set_w_dummies)[12:22] <- c("Bussinessman", "Commercial_Associate", "Maternity_Leave", "Pensioner", "State_Servant", "Student", "Working_Class", "Higher_Education", "Incomplete_Higher_Education", "Lower_Seconday_Education", "Seconday_Secondary_Special")
+
+# check the result
+training_set_w_dummies[,c(6, 9, 12:22)]
+```
+
+Turn Yes/No columns into 1's and 0's to be used in modeling
+```{r}
+training_set_w_dummies$FLAG_OWN_CAR <- as.integer(training_set_w_dummies$FLAG_OWN_CAR == "Y")
+training_set_w_dummies$FLAG_OWN_REALTY <- as.integer(training_set_w_dummies$FLAG_OWN_REALTY == "Y")
+training_set_w_dummies$TARGET <- as.integer(training_set_w_dummies$TARGET == "1")
+```
+
+
+## Partitions
+We will need to partition the training set into (at least) two partitions - one for training the data and one for testing. We need to test on a training partition before deploying the model to the formal testing set to measure accuracy (testing_set doesn't have the TARGET variable)
+
+This code will partition the training set into two: t_train and t_test. We will set the testing_set aside for now. use that at the end for final model predictions. 
+
+```{r partitions}
+set.seed(234)
+
+#creates a training subset of the training data with 70% of the data
+t_train_index <- createDataPartition(training_set_w_dummies$TARGET, p = 0.7, list=FALSE)
+
+t_train <- training_set_w_dummies[t_train_index,]
+t_test <- training_set_w_dummies[-t_train_index,]
+
+#check data
+summary(t_train)
+summary(t_test)
+
+#check for relative frequency of Target in t_train and t_test
+t_train %>%
+  group_by(TARGET) %>%
+  summarise(percent = n()/nrow(.))
+
+t_test %>%
+  group_by(TARGET) %>%
+  summarise(percent = n()/nrow(.))
+
+```
+
+
+Looks like we are set! 
+Note from Karson: I didn't sample to address classification bias or standardize the values with wide variance like income or loan amount. Tweaks like those may improve your model performance, but I wanted to give you both the options to try different approaches. Feel free to modify the data how you see fit. 
+<-------------------START CODING MODELS HERE--------------->
+
+
+
+```{r}
+
+library(tidyverse)
+library(missForest)
+library(caret)
+library(MASS)
+```
+
+
+```{r}
+head(t_train)
+head(t_test)
+dim(t_train)
+dim(t_test)
+```
+
+
+
+```{r}
+# Creation of a summary table of conditional TARGET rates by Income Type and Education Type:
+
+t_train %>% 
+  group_by(NAME_INCOME_TYPE, NAME_EDUCATION_TYPE) %>% 
+  summarize(TARGET = sum(TARGET=="1")) %>%
+  arrange(desc(TARGET))
+
+```
+
+
+```{r}
+# Creation of a summary table of conditional TARGET rates by Total Income Amount:
+
+# I need help here in grouping income amounts in maybe 5 different levels and running this by level type. 
+
+t_train %>% 
+  group_by(AMT_INCOME_TOTAL,) %>% 
+  summarize(TARGET = sum(TARGET=="1")) %>%
+  arrange(desc(TARGET))
+
+
+# Creation of a summary table of conditional TARGET rates by Amount Annuity:
+
+t_train %>% 
+  group_by(AMT_ANNUITY,) %>% 
+  summarize(TARGET = sum(TARGET=="1")) %>%
+  arrange(desc(TARGET))
+
+# Creation of a summary table of conditional TARGET rates by Amount Credit:
+
+t_train %>% 
+  group_by(AMT_CREDIT,) %>% 
+  summarize(TARGET = sum(TARGET=="1")) %>%
+  arrange(desc(TARGET))
+
+```
+
+
+
+```{r}
+# Calculating mean of TARGET rate in training and testing sets::
+
+mean(t_train$TARGET==1)
+mean(t_train$TARGET==0)
+
+mean(t_test$TARGET==1)
+mean(t_test$TARGET==0)
+```
+
+In this step I started to create the logistic models and run validation / accuracy in order to identify which of the Logistic Regression Models would work the best in terms of having the strongest predictors of TARGET. I started with fewer predictors and increased one by one comparing the AIC, deviance, accuracy, and ROC Curve.
+
+
+
+
+```{r}
+# Model 1: Simple Logistic Regression Model: Target explained by Total Income Amount:
+
+model1 <- glm(TARGET ~ AMT_INCOME_TOTAL, data = t_train, family = binomial)
+summary(standardize(model1))
+
+invlogit <- function(x) exp(x)/(1 + exp(x))
+
+invlogit(-2.2 + 0.0 * 0) %>%
+  round(2)
+
+#  -2.2  represents  log odds of having issues in payment (TARGET = 1) when Total Income amount = 0 
+
+#  Average Income Amount:
+
+mean(t_train$AMT_INCOME_TOTAL)
+
+# Performing logistic regression of Target explained by Average Total Income Amount:
+
+invlogit <- function(x) exp(x)/(1 + exp(x))
+
+invlogit(-2.2 + 0.0 * 177929.5) %>%
+  round(2)
+
+```
+
+
+```{r}
+# Calculating Deviance for Model1:
+
+glm(TARGET ~ AMT_INCOME_TOTAL, data = t_train, family = binomial)$deviance
+```
+Model1: 
+AIC= 86485 - High AIC as a result of having only one predictor for Model1
+Deviance: 86480.83
+
+```{r}
+# Model2: Simple Logistic Regression Model incorporating more predictors: Target explained by Total Income Amount + Total CREDIT Amount + Total Annuity Amount:
+
+model2 <- glm(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY, data = t_train, family = binomial)
+summary(standardize(model2))
+
+```
+```{r}
+# Calculating Deviance for Model2:
+
+glm(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY, data = t_train, family = binomial)$deviance
+```
+
+
+Model2:
+AIC= 86284, which is 201 AIC points less than Model1 (86485), showing that this is a more effective model in predicting the target Variable.
+Deviance = 86275.68
+
+
+
+```{r}
+
+# Model3: Simple Logistic Regression Model incorporating more predictors: Target explained by AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT. 
+
+model3 <- glm(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT, data = t_train, family = binomial)
+summary(standardize(model3))
+
+```
+```{r}
+# Calculating Deviance for Model3:
+
+glm(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT, data = t_train, family = binomial)$deviance
+```
+
+Model3:
+AIC= 84843, which is 1441 AIC points less than Model2 (86284), and 1642 AIC points less than Model1(86485) - showing that this is a more effective model in predicting the target Variable.
+Deviance: 84831.29
+
+
+
+```{r}
+# Model4:  Logistic Regression Model incorporating more predictors: Target explained by AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT + NAME_INCOME_TYPE + NAME_EDUCATION_TYPE. 
+
+model4 <- glm(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT + NAME_INCOME_TYPE + NAME_EDUCATION_TYPE , data = t_train, family = binomial)
+summary(standardize(model4))
+
+```
+```{r}
+# Calculating Deviance for Model4:
+
+glm(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT + NAME_INCOME_TYPE + NAME_EDUCATION_TYPE , data = t_train, family = binomial)$deviance
+```
+
+
+Model4:
+AIC= 84133, which is 710 AIC points less than Model3 (84843), and 2151 AIC points less than Model2(86284) - showing that this is a more effective model in predicting the target Variable.
+Deviance: 84101.18
+
+```{r}
+# Creation of Confusion Matrix (predicted/actual) for Model4:
+
+confusionMatrix(ifelse(predict(model4, newdata=t_train, type="response")> .5, 1, 0),
+                t_train$TARGET)
+
+
+```
+
+
+```{r}
+# AUC and Roc Curve for Model4:
+
+library(pROC)
+
+roc(t_train$TARGET, 
+    predict(model4, type = "response"), 
+    plot=T, 
+    add= T,
+    col=2)
+
+```
+
+
+
+```{r}
+# Model4 Residual Plot: Binnedplot:
+
+binnedplot(fitted(model4), 
+           t_train$TARGET - fitted(model4))
+```
+
+
+```{r}
+# Fitting a KNN model of TARGET using the same predictor variables for model4.
+
+set.seed(1234)
+  (knn_model <- train(factor(TARGET) ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_ANNUITY + DAYS_EMPLOYED + DAYS_CREDIT + NAME_INCOME_TYPE + NAME_EDUCATION_TYPE, 
+                    data=t_train, 
+                    preProcess=c("center", "scale"),
+                    method="knn"))
+
+AIC(knn_model)
+```
+
+
+
+
+
+
+
+
+
+

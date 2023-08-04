@@ -1,0 +1,170 @@
+---
+title: "Capstone EDA Summer 2023"
+output: html_document
+date: "2023-06-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Business Problem Statement:
+
+A vast amount of people in the United States have difficulty in verifying and providing proof of credit accountability when getting loans. This is a reflection of insufficient or non-existent credit histories and variance among people’s financial historical data. Without sufficient financial and credit histories, it becomes harder for lenders to identify and predict which customers are defaulters and non-defaulters, which can lead to misidentifications between both groups, as well as a reduction of possible future customers that would be in fact reliable borrowers. 
+
+The purpose of the proposed project is to create a supervised analytical model to help Home Credit predict how capable each applicant is of repaying a possible loan. The analytics approach in solving this issue will be to use the different features for the current application vs. previous applications and create a supervised model based on multiple regression, and machine learning techniques like  k-Fold Cross-Validation, Gaussian Mixture Model, and/or Artificial Neural Networks. Our team will also use the different transactional datasets available in order to improve the performance of the predictive model. 
+
+The main deliverable for this project will the creation of a predictive model that can be used to identify defaulters and non-defaulters and  support future analysis, and a formal determination of which variables are more important when determining the  prediction of the repayment ability of enterprise loans.This will benefit the lenders by providing them more reliable models and also will benefit the customers by delivering greater access to financial services that could not be available for them due to the lack of historical financial data. 
+
+Our team is composed of three students in the University of Utah MSBA program. The project will be completed by August 2, and will be separated in three main milestones: Exploratory Data Analysis, Modeling, and Final Model Presentation. The benchmark for success on this project is to be able to deliver the predictive model in a way that is reliable, effective, and cost efficient, in which we can use the current data collected without needing to expend more resources collecting future information. 
+
+
+
+########################################################################
+
+
+# Identification of target Variable:
+
+# The target variable identified during this initial EDA stage is the variable named TARGET in the application_{train|test}.csv dataset.The TARGET Variable is a factor variable composed by 1 - client with payment difficulties: he/she had late payment more than X days on at least one of the first Y installments of the loan in our sample, and 0 - all other cases.
+
+
+########################################################################
+
+
+# Questions that guided our exploration during initial EDA phase:
+
+# Should we merge the datasets and which datasets should be merged for our modeling and analysis?
+# In the case of merging datasets, should we clean the data before merging or merging and then cleaning the data?
+# What are the main statistical summaries of application_{train|test}.csv dataset? 
+# What are the datasets that we should be focusing for our Exploratory Data Analysis?
+# How can you handle missing values in the datasets?
+# What are the non useful datasets presented available? 
+# Which variables in the Traning and test set will provide us a better understanding of our data and possible insights for analysis and model creation?
+# Which variables within the training set will be better predictors in determining the target data. 
+
+########################################################################
+
+# Interpretation of plots and summaries:
+
+# - Will be added individually after each plot/summary.
+
+
+# Results session: 
+
+# During this initial EDA stage of our Capstone Project, our team focused on getting possible insights on a individual level and them sharing ideas and  discussions on how each of our analysis could improve our group EDA and help us determine important decisions for our next modeling phase. Karson Eilers focused on aggregating the transactional data, analysing missing values and performing initial exploratory analysis for the target variable. Paula Stefani focused on doing initial simple regression models in order to identify the strongest predictors of the target variable and identify the variables that would be more beneficial for the modeling stage. Jade Gosar focused on getting interesting insights by creating multiple plots in order to understand how the variables behave, for example by examining the NAME_HOUSING_TYPE variable and understanding the density levels of AMT_INCOME_TOTAL. 
+
+The main results of this initial EDA Stage were:
+Identification of the target variable (TARGET) we intend to use for the supervised regression model we will be creating in the modeling phase.
+Discussion on how we intend to handle the missing values on the datasets.
+Identification of the main datasets we intend to use for the modeling phase: application_{train|test}.csv, bureau.csv, and previous_application.csv.
+Determination of the main variables in the application_{train|test} dataset that we will want to use in order to implement in the future regression models: AMT_INCOME_TOTAL, AMT_CREDIT, AMT_ANNUITY, REG_REGION_NOT_LIVE_REGION, NAME_INCOME_TYPE, NAME_EDUCATION_TYPE, NAME_HOUSING_TYPE, OCCUPATION_TYPE. 
+
+########################################################################
+
+```{r}
+# Installing and Loading of libraries
+
+install.packages('skimr')
+library(skimr)
+library(tidyverse)
+
+# Reading the datasets. 
+
+datatrain <- read_csv('application_train.csv')
+datatest <- read_csv('application_test.csv')
+                   
+
+# Summary of entire data train set: 
+summary(datatrain)
+summary(datatest)
+```
+
+```{r}
+# Glimpse of the data train and data test in order to identify the main data types for each of the variables. Also in order to understand which variables should be transformed into factors for analysis:
+
+glimpse(datatrain)
+
+glimpse(datatest)
+```
+
+```{r}
+#Transforming TARGET in Factor:
+
+target <- as.factor(datatrain$target)
+
+# Plotting target against income with a summary linear regression line:
+
+(lm_model1 <-lm(TARGET ~ AMT_INCOME_TOTAL, data = datatrain)) %>%
+  summary
+
+# Plotting target against credit with a summary linear regression line:
+
+(lm_model2 <-lm(TARGET ~ AMT_CREDIT, data = datatrain)) %>%
+  summary
+
+# Plotting target against annuity with a summary linear regression line:
+
+(lm_model3 <-lm(TARGET ~ AMT_ANNUITY, data = datatrain)) %>%
+  summary
+
+# By applying the lm function in the three main variables (AMT_INCOME_TOTAL, AMT_CREDIT, AMT_ANNUITY) we initially believed could be predictors of target, we were able to identify that two out of the three variables have p values that are less than our alpha value of 0.05, suggesting that they may be possible strong predictors.AMT_INCOME_TOTAL had a p value of 0.0272, and  AMT_CREDIT had a p value of <2e-16 (0). However, AMT_ANNUITY showed a p value of 1.18e-12 , which is bigger than our alpha value of 0.05. This was helpful for us to identify that AMT_ANNUITY is not in fact a strong predictor of TARGET. 
+
+```
+
+
+```{r}
+# summary calculation for the income variable, grouping by the two different target levels (0 and 1)
+
+datatrain <- na.omit(datatrain)
+
+datatrain %>%
+  group_by(TARGET) %>%
+  summarize(mean = mean(AMT_INCOME_TOTAL),
+            median = median(AMT_INCOME_TOTAL),
+            sd = sd(AMT_INCOME_TOTAL),
+            percentile_90 = quantile(AMT_INCOME_TOTAL, prob = .9))
+```
+
+
+```{r}
+# summary calculation for the annuity variable, grouping by the two different target levels (0 and 1)
+
+datatrain %>%
+  group_by(TARGET) %>%
+  summarize(mean = mean(AMT_ANNUITY),
+            median = median(AMT_ANNUITY),
+            sd = sd(AMT_ANNUITY),
+            percentile_90 = quantile(AMT_ANNUITY, prob = .9))
+```
+
+
+```{r}
+# summary calculation for the credit variable, grouping by the two different target levels (0 and 1)
+
+datatrain %>%
+  group_by(TARGET) %>%
+  summarize(mean = mean(AMT_CREDIT),
+            median = median(AMT_CREDIT),
+            sd = sd(AMT_CREDIT),
+            percentile_90 = quantile(AMT_CREDIT, prob = .9))
+```
+
+```{r}
+
+library("ggplot2")
+
+ggplot(datatrain, aes(x = AMT_INCOME_TOTAL)) + 
+  geom_histogram() + 
+  facet_wrap(~TARGET) +
+  labs(title = "Income Distribution By TARGER FACTOR")
+
+
+```
+
+
+
+
+
+
+
